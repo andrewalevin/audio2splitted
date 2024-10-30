@@ -5,6 +5,8 @@ from datetime import timedelta
 
 import asyncio
 from utils4audio.duration import get_duration
+from audio2splitted.utils import run_cmds
+from src.audio2splitted.utils import copy_file
 
 DURATION_MINUTES_MIN = 1
 DURATION_MINUTES_MAX = 480
@@ -72,20 +74,6 @@ def get_split_audio_scheme(
 
     return scheme
 
-async def run_command(cmd):
-    process = await asyncio.create_subprocess_exec(
-        *cmd,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE
-    )
-
-    stdout, stderr = await process.communicate()
-    return stdout, stderr
-
-
-async def run_cmds(cmds_list):
-    tasks = [run_command(cmd) for cmd in cmds_list]
-    await asyncio.gather(*tasks)
 
 async def make_split_audio(
         audio_path: pathlib.Path,
@@ -130,6 +118,65 @@ async def make_split_audio(
         await run_cmds(cmds_list)
 
         print("🟢 All Done! Lets see .m4a files and their length")
+
+    return audios
+
+
+async def make_split_by_scheme(
+        audio_path: pathlib.Path,
+        output_folder: pathlib.Path = pathlib.Path('.'),
+        scheme: list = None,
+        prefix_filename: str = '',
+        suffix_filename: str = '') -> list:
+    
+    try:
+        duration = get_duration(audio_path)
+    except Exception as e:
+        return []
+    
+    if scheme is None:
+        return [{
+            'path': audio_path,
+            'duration': duration,
+            'start': 0,
+            'end': duration}]
+
+    if len(scheme) == 1:
+        audio_solo_output = output_folder.joinpath(audio_path.name)
+        result = await copy_file(audio_path, audio_solo_output)
+        if not result:
+            return []
+
+        return [{
+            'path': audio_solo_output,
+            'duration': duration,
+            'start': 0,
+            'end': duration}]
+        
+    audios = []
+    cmds_list = []
+    for idx, item in enumerate(scheme, start=1):
+        item_filename = f'{audio_path.stem}{prefix_filename}-p{idx}-of{len(scheme)}{suffix_filename}'
+        item_file = output_folder.joinpath(audio_path.name).with_stem(item_filename)
+
+        start = item[0]
+        end = item[1]
+
+        audios.append({
+            'path': item_file,
+            'duration': end - start,
+            'start': start,
+            'end': end})
+
+        cmd = f'ffmpeg -i {audio_path.as_posix()} -ss {time_format(start)} -to {time_format(end)} -c copy -y {item_file.as_posix()}'
+        print(cmd)
+        # todo CMD logger
+
+        cmds_list.append(cmd.split(' '))
+
+    results, all_success = await run_cmds(cmds_list)
+    if not all_success:
+        return []
 
     return audios
 
