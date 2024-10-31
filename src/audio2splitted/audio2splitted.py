@@ -5,8 +5,7 @@ from datetime import timedelta
 
 import asyncio
 from utils4audio.duration import get_duration
-from audio2splitted.utils import run_cmds
-from src.audio2splitted.utils import copy_file
+from audio2splitted.utils import copy_file, run_cmds
 
 DURATION_MINUTES_MIN = 1
 DURATION_MINUTES_MAX = 480
@@ -128,12 +127,11 @@ async def make_split_by_scheme(
         scheme: list = None,
         prefix_filename: str = '',
         suffix_filename: str = '') -> list:
-    
     try:
         duration = get_duration(audio_path)
     except Exception as e:
         return []
-    
+
     if scheme is None:
         return [{
             'path': audio_path,
@@ -152,7 +150,7 @@ async def make_split_by_scheme(
             'duration': duration,
             'start': 0,
             'end': duration}]
-        
+
     audios = []
     cmds_list = []
     for idx, item in enumerate(scheme, start=1):
@@ -204,6 +202,122 @@ async def split_audio(
         output_folder=output_folder,
         scheme=scheme
     )
+    return audio_parts
+
+
+def adjust_final_audio_segment(audio_segments: list, ratio: float = GOLDEN_RATIO) -> list:
+    if len(audio_segments) <= 1:
+        return audio_segments
+
+    # Calculate durations of the last two segments
+    second_last_duration = audio_segments[-2][1] - audio_segments[-2][0]
+    last_duration = audio_segments[-1][1] - audio_segments[-1][0]
+
+    # Adjust the ratio based on the calculated durations
+    calculated_ratio = second_last_duration / last_duration
+
+    if calculated_ratio > ratio:
+        audio_segments[-2][1] = audio_segments[-1][1]
+        del audio_segments[-1]
+
+    return audio_segments
+
+
+PADDING_DURATION_DEFAULT_SECONDS = 3
+
+
+def get_audio_segments_by_duration(
+        total_audio_duration: int,
+        audio_segment_duration: int,
+        padding_duration: int = PADDING_DURATION_DEFAULT_SECONDS) -> list:
+    audio_segments = []
+    current_time = 0
+
+    while current_time < total_audio_duration:
+        segment_start = max(0, current_time - padding_duration)
+        segment_end = min(total_audio_duration, current_time + audio_segment_duration + padding_duration)
+
+        audio_segments.append([segment_start, segment_end])
+
+        # Move time forward by segment duration
+        current_time += audio_segment_duration
+
+    return audio_segments
+
+
+def get_audio_segments_by_timecodes(
+        total_audio_duration: int,
+        timecodes: list,
+        padding_duration: int = PADDING_DURATION_DEFAULT_SECONDS) -> list:
+    # Filter timecodes within valid audio duration range
+    timecodes = [t for t in timecodes if 0 < t < total_audio_duration]
+    print('timecodes: Trimmed', timecodes)
+
+    # Extend timecodes to include the start and end of the audio
+    timecodes = [0] + timecodes + [total_audio_duration]
+    print('timecodes: Extended', timecodes)
+
+    # Filter out timecodes with close neighbors
+    filtered_timecodes = [timecodes[0]]
+    for t in timecodes[1:]:
+        if t - filtered_timecodes[-1] >= 2 * padding_duration:
+            filtered_timecodes.append(t)
+
+    # Ensure the last timecode represents the total audio duration
+    if filtered_timecodes[-1] < total_audio_duration:
+        filtered_timecodes.append(total_audio_duration)
+
+    print('Filtered timecodes:', filtered_timecodes)
+
+    # Create segments with padding applied
+    segments = [
+        [
+            max(filtered_timecodes[i] - padding_duration, 0),
+            min(filtered_timecodes[i + 1] + padding_duration, total_audio_duration)
+        ]
+        for i in range(len(filtered_timecodes) - 1)
+    ]
+
+    return segments
+
+
+async def split_audio_second(
+        path: pathlib.Path,
+        output_folder: pathlib.Path = pathlib.Path('.'),
+        duration_minutes: int = DURATION_MINUTES_DEFAULT,
+        delta_seconds: int = DELTA_SECONDS_DEFAULT,
+        magic_tail: bool = SET_MAGIC_TAIL_DEFAULT,
+        threshold_split_duration: int = 60 * 10):
+    audio_duration = get_duration(path)
+    print('🧵 Duration: ', audio_duration)
+
+    if audio_duration < threshold_split_duration:
+        print('👺 Nothing to do')
+        return
+
+    audio_segments = get_audio_segments_by_duration(total_audio_duration=audio_duration, audio_segment_duration=500)
+    print(audio_segments)
+    print()
+
+    audio_segments = adjust_final_audio_segment(audio_segments)
+    print(audio_segments)
+    print()
+
+    print('🙈🙉')
+
+    timecodes = [999, 1599, 1999, 2599]
+    audio_segments = get_audio_segments_by_timecodes(total_audio_duration=audio_duration, timecodes=timecodes)
+    print(audio_segments)
+    print()
+
+    return
+
+    audio_parts = await make_split_audio(
+        audio_path=path,
+        audio_duration=audio_duration,
+        output_folder=output_folder,
+        scheme=scheme)
+
     return audio_parts
 
 

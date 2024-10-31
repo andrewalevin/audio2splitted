@@ -166,3 +166,7 @@ audio2splitted = "audio2splitted.audio2splitted:main"
 # If there are data files included in your packages that need to be
 # installed, specify them here.
 package-data = {"sample" = ["*.dat"]}
+
+
+[tool.setuptools.packages.find]
+where = ["src"]
